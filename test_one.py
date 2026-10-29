@@ -35,7 +35,14 @@ class OneTest(unittest.TestCase):
     def test_done_bumps_streak_and_clears(self):
         run("set", "x")
         self.assertEqual(run("done")[0], 0)
-        self.assertEqual(one.load(), {"thing": None, "streak": 1})
+        state = one.load()
+        self.assertEqual((state["thing"], state["streak"]), (None, 1))
+        self.assertEqual(state["done"][0]["thing"], "x")
+        self.assertIn("x", run("log")[1])
+
+    def test_old_file_without_log_still_loads(self):
+        self.file.write_text('{"thing": "a", "streak": 4}')
+        self.assertEqual(one.load(), {"thing": "a", "streak": 4, "done": []})
 
     def test_done_without_thing_fails(self):
         self.assertEqual(run("done")[0], 1)
@@ -43,7 +50,7 @@ class OneTest(unittest.TestCase):
 
     def test_corrupt_file_loads_defaults(self):
         self.file.write_text("{not json")
-        self.assertEqual(one.load(), {"thing": None, "streak": 0})
+        self.assertEqual(one.load(), {"thing": None, "streak": 0, "done": []})
 
     def test_empty_set_rejected(self):
         self.assertEqual(run("set", " ")[0], 1)

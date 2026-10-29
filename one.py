@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 QUESTION = ("What's the ONE thing I can do such that by doing it "
@@ -18,9 +19,11 @@ def data_file():
 def load():
     try:
         data = json.loads(data_file().read_text(encoding="utf-8"))
-        return {"thing": data.get("thing"), "streak": int(data.get("streak", 0))}
+        done = data.get("done", [])
+        return {"thing": data.get("thing"), "streak": int(data.get("streak", 0)),
+                "done": done if isinstance(done, list) else []}
     except (OSError, ValueError, AttributeError):
-        return {"thing": None, "streak": 0}
+        return {"thing": None, "streak": 0, "done": []}
 
 
 def save(state):
@@ -73,6 +76,7 @@ def main(argv=None):
     g = sub.add_parser("go", help="start a focus timer: one go [minutes], default 25")
     g.add_argument("minutes", nargs="?", type=float, default=25)
     sub.add_parser("done", help="finish your ONE thing")
+    sub.add_parser("log", help="list everything you've finished")
     sub.add_parser("help", help="show this help")
     args = p.parse_args(argv)
     if args.cmd == "help":
@@ -98,10 +102,18 @@ def main(argv=None):
             print('Nothing set. Run:  one set "..."', file=sys.stderr)
             return 1
         print(f"Done: {state['thing']}")
+        state["done"].append({"thing": state["thing"],
+                              "at": datetime.now().strftime("%Y-%m-%d %H:%M")})
         state["thing"] = None
         state["streak"] += 1
         save(state)
         print(f"Streak: {state['streak']}\n\nNext: {QUESTION}")
+    elif args.cmd == "log":
+        print(f"Streak: {state['streak']}")
+        if not state["done"]:
+            print("Nothing logged yet. Finish one with:  one done")
+        for i, d in enumerate(state["done"], 1):
+            print(f"  {i:>3}. {d.get('at', '?')}  {d.get('thing', '?')}")
     else:
         show(state)
     return 0
