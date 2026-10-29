@@ -20,10 +20,13 @@ def load():
     try:
         data = json.loads(data_file().read_text(encoding="utf-8"))
         done = data.get("done", [])
+        started = data.get("started")
         return {"thing": data.get("thing"), "streak": int(data.get("streak", 0)),
-                "done": done if isinstance(done, list) else []}
-    except (OSError, ValueError, AttributeError):
-        return {"thing": None, "streak": 0, "done": []}
+                "done": done if isinstance(done, list) else [],
+                "started": float(started) if started is not None else None,
+                "best": float(data.get("best", 0))}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"thing": None, "streak": 0, "done": [], "started": None, "best": 0.0}
 
 
 def save(state):
@@ -31,6 +34,12 @@ def save(state):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state), encoding="utf-8")
     os.replace(tmp, path)  # atomic: a crash never leaves a half-written file
+
+
+def hms(seconds):
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}"
 
 
 def show(state):
@@ -42,30 +51,23 @@ def show(state):
     print("+" + "-" * len(line) + "+")
     print("|" + line + "|")
     print("+" + "-" * len(line) + "+")
-    print(f"  streak: {state['streak']}   start:  one go")
+    if state["started"] is not None:
+        print(f"  running: {hms(time.time() - state['started'])}   "
+              f"record: {hms(state['best'])}   stop:  one stop")
+    else:
+        print(f"  streak: {state['streak']}   record: {hms(state['best'])}   start:  one start")
 
 
-def beep():
-    try:
-        import winsound
-        winsound.Beep(880, 600)
-    except (ImportError, RuntimeError):
-        print("\a", end="")
-
-
-def go(minutes):
-    end = time.monotonic() + minutes * 60
-    try:
-        while (left := end - time.monotonic()) > 0:
-            m, s = divmod(int(left + 0.999), 60)
-            print(f"\r  focus  {m:02d}:{s:02d} ", end="", flush=True)
-            time.sleep(min(1, left))
-    except KeyboardInterrupt:
-        print("\r  stopped.          ")
-        return 0
-    print("\r  DONE. Time's up.  ")
-    beep()
-    return 0
+def stop(state):
+    """Stop the stopwatch, update the record. Caller saves."""
+    took = time.time() - state["started"]
+    state["started"] = None
+    print(f"Focused: {hms(took)}")
+    if took > state["best"]:
+        print(f"NEW RECORD! (was {hms(state['best'])})")
+        state["best"] = took
+    else:
+        print(f"Record: {hms(state['best'])}  ({hms(state['best'] - took)} to beat it)")
 
 
 def main(argv=None):
@@ -73,9 +75,9 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd")
     s = sub.add_parser("set", help="set your ONE thing")
     s.add_argument("text", nargs="+")
-    g = sub.add_parser("go", help="start a focus timer: one go [minutes], default 25")
-    g.add_argument("minutes", nargs="?", type=float, default=25)
-    sub.add_parser("done", help="finish your ONE thing")
+    sub.add_parser("start", help="start the stopwatch")
+    sub.add_parser("stop", help="stop the stopwatch, see if you beat your record")
+    sub.add_parser("done", help="finish your ONE thing (also stops the stopwatch)")
     sub.add_parser("log", help="list everything you've finished")
     sub.add_parser("help", help="show this help")
     args = p.parse_args(argv)
@@ -92,15 +94,25 @@ def main(argv=None):
         state["thing"] = text
         save(state)
         show(state)
-    elif args.cmd == "go":
-        if args.minutes <= 0:
-            print("Minutes must be more than 0.", file=sys.stderr)
+    elif args.cmd == "start":
+        if state["started"] is not None:
+            print(f"Already running: {hms(time.time() - state['started'])}", file=sys.stderr)
             return 1
-        return go(args.minutes)
+        state["started"] = time.time()
+        save(state)
+        print(f"Started. Record to beat: {hms(state['best'])}")
+    elif args.cmd == "stop":
+        if state["started"] is None:
+            print("Not running. Start with:  one start", file=sys.stderr)
+            return 1
+        stop(state)
+        save(state)
     elif args.cmd == "done":
         if not state["thing"]:
             print('Nothing set. Run:  one set "..."', file=sys.stderr)
             return 1
+        if state["started"] is not None:
+            stop(state)
         print(f"Done: {state['thing']}")
         state["done"].append({"thing": state["thing"],
                               "at": datetime.now().strftime("%Y-%m-%d %H:%M")})
@@ -109,7 +121,7 @@ def main(argv=None):
         save(state)
         print(f"Streak: {state['streak']}\n\nNext: {QUESTION}")
     elif args.cmd == "log":
-        print(f"Streak: {state['streak']}")
+        print(f"Streak: {state['streak']}   Record: {hms(state['best'])}")
         if not state["done"]:
             print("Nothing logged yet. Finish one with:  one done")
         for i, d in enumerate(state["done"], 1):
